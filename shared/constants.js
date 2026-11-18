@@ -1,5 +1,6 @@
 // Shared between server and client. The tank is a 3D box: x = width, y = height, z = depth.
-export const TANK = { minX: -22, maxX: 22, minY: 0.6, maxY: 15, minZ: -10, maxZ: 10 };
+// 10x the water of the original 44 x 15 x 20 tank (about 2.15x along each side)
+export const TANK = { minX: -47.5, maxX: 47.5, minY: 0.6, maxY: 32, minZ: -21.5, maxZ: 21.5 };
 
 export const ROUND_TIME = 150; // seconds of diver air
 export const SUIT_PICK_TIME = 6;
@@ -36,18 +37,33 @@ export const SUITS = {
 
 // Tank features (all 3D)
 export const BUBBLE_COLUMNS = [
-  { x: -12, z: 3, r: 1.6, push: 30 },
-  { x: 4, z: -5, r: 1.6, push: 30 },
-  { x: -1, z: 6, r: 1.4, push: 30 },
+  { x: -26, z: 6, r: 1.8, push: 30 },
+  { x: 9, z: -11, r: 1.8, push: 30 },
+  { x: -2, z: 13, r: 1.6, push: 30 },
+  { x: 28, z: 8, r: 1.8, push: 30 },
+  { x: -40, z: -10, r: 1.6, push: 30 },
+  { x: 40, z: -4, r: 1.6, push: 30 },
 ];
-// castle against the back wall; fish swim in through the front arches, the diver doesn't fit
-export const CAVE = { minX: 11, maxX: 19, minY: 0, maxY: 4.2, minZ: -10, maxZ: -4 };
+// castles against the back wall; fish swim in through the front arches, the diver doesn't fit
+export const CAVES = [
+  { minX: 24, maxX: 32, minY: 0, maxY: 4.2, minZ: -21.5, maxZ: -15.5 },
+  { minX: -36, maxX: -28, minY: 0, maxY: 4.2, minZ: -21.5, maxZ: -15.5 },
+];
 export const SEAWEED = [
-  { x: -18, z: -6, r: 2.6, h: 7 },
-  { x: -4, z: -7, r: 2.3, h: 6 },
-  { x: 9, z: 5, r: 2.2, h: 8 },
-  { x: -10, z: 7, r: 2.0, h: 6.5 },
+  { x: -39, z: -13, r: 3.2, h: 12 },
+  { x: -9, z: -15, r: 3.0, h: 10 },
+  { x: 19, z: 11, r: 2.8, h: 14 },
+  { x: -22, z: 15, r: 2.6, h: 11 },
+  { x: 40, z: 15, r: 3.0, h: 12 },
+  { x: 6, z: 2, r: 2.4, h: 9 },
+  { x: -33, z: 3, r: 2.4, h: 10 },
+  { x: 35, z: -12, r: 2.6, h: 13 },
+  { x: -6, z: 17, r: 2.2, h: 8 },
 ];
-export const ANEMONE = { x: -7, y: 1.2, z: 0, r: 2.3, healEvery: 3 };
+export const ANEMONES = [
+  { x: -15, y: 1.2, z: 0, r: 2.5 },
+  { x: 16, y: 1.2, z: -2, r: 2.5 },
+];
+export const HEAL_EVERY = 3;
 
 export const dist3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
