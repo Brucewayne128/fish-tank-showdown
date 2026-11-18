@@ -6,6 +6,15 @@ import {
 const BOT_NAMES = ['Bubbles', 'Finn', 'Coral', 'Gill', 'Splash', 'Kelp', 'Pebble', 'Squirt'];
 const ANIMAL_KINDS = Object.keys(ANIMALS);
 const MAX_PLAYERS = 10;
+const SUIT_KEYS = Object.keys(SUITS);
+
+// how hard the bots play. fish: swim pace, bites/sec when close, ability rate.
+// diver: aim wobble (radians), shots/sec when lined up, swim pace, reaction time.
+export const DIFFICULTY = {
+  easy:   { fishPace: 0.5,  biteRate: 0.8, abilityRate: 0.3, aimErr: 0.32, fireRate: 0.6, divePace: 0.55, react: 1.6 },
+  normal: { fishPace: 0.65, biteRate: 1.6, abilityRate: 0.6, aimErr: 0.16, fireRate: 1.3, divePace: 0.75, react: 1.0 },
+  hard:   { fishPace: 0.85, biteRate: 3.0, abilityRate: 1.0, aimErr: 0.07, fireRate: 3.0, divePace: 0.95, react: 0.5 },
+};
 
 let nextId = 1;
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -42,7 +51,9 @@ export class Room {
     this.result = null;
     this.spearId = 1;
     this.sendAcc = 0;
+    this.difficulty = 'normal';
   }
+  get diff() { return DIFFICULTY[this.difficulty]; }
 
   get humans() { return [...this.players.values()].filter(p => !p.bot); }
   get full() { return this.players.size >= MAX_PLAYERS; }
@@ -81,6 +92,7 @@ export class Room {
       fx: { frenzy: 0, puff: 0, shell: 0, stun: 0, zoom: 0, flare: 0 },
       stamina: 1, tired: false, boosting: false,
       kills: 0, hidden: false, cave: false,
+      wantsDiver: true, // players can opt out of being picked as the diver
     };
   }
 
@@ -109,6 +121,12 @@ export class Room {
       case 'bot':
         if (p.id === this.hostId) msg.add ? this.addBot() : this.removeBot();
         break;
+      case 'diverpref':
+        if (this.phase === 'lobby') p.wantsDiver = !!msg.on;
+        break;
+      case 'diff':
+        if (p.id === this.hostId && this.phase === 'lobby' && DIFFICULTY[msg.level]) this.difficulty = msg.level;
+        break;
       case 'in': {
         // move is a world-space direction (the client turns stick/keys + camera into it), length <= 1
         const i = p.input;
@@ -127,9 +145,15 @@ export class Room {
 
   startRound() {
     if (this.players.size < 2) this.addBot();
-    const humans = this.humans;
-    const diver = humans[Math.floor(Math.random() * humans.length)];
+    // the diver is a random human who said yes; if nobody wants it, a bot dives
+    let pool = this.humans.filter(p => p.wantsDiver);
+    if (!pool.length) {
+      if (![...this.players.values()].some(p => p.bot)) this.addBot();
+      pool = [...this.players.values()].filter(p => p.bot);
+    }
+    const diver = pool[Math.floor(Math.random() * pool.length)];
     this.diverId = diver.id;
+    if (diver.bot) diver.suit = SUIT_KEYS[Math.floor(Math.random() * SUIT_KEYS.length)];
     this.spears = []; this.inks = []; this.result = null;
     for (const p of this.players.values()) {
       Object.keys(p.cd).forEach(k => (p.cd[k] = 0));
@@ -192,7 +216,7 @@ export class Room {
       if (!p.alive || p.role === 'spectator') continue;
       for (const k in p.cd) p.cd[k] = Math.max(0, p.cd[k] - dt);
       for (const k in p.fx) p.fx[k] = Math.max(0, p.fx[k] - dt);
-      if (p.bot && playing) this.botThink(p, diver, dt);
+      if (p.bot && playing) p.role === 'diver' ? this.botDiverThink(p, dt) : this.botThink(p, diver, dt);
       this.updateStamina(p, dt);
       this.move(p, dt);
       if (playing) {
@@ -440,12 +464,69 @@ export class Room {
     } else { tx = diver.x + p.jx; ty = diver.y + p.jy; tz = diver.z + p.jz; }
     const m = { x: tx - p.x, y: ty - p.y, z: tz - p.z };
     const ml = Math.hypot(m.x, m.y, m.z) || 1;
-    const slow = Math.min(1, ml) * 0.65;
+    const D = this.diff;
+    const slow = Math.min(1, ml) * D.fishPace;
     i.mx = (m.x / ml) * slow; i.my = (m.y / ml) * slow; i.mz = (m.z / ml) * slow;
     i.aim = p.retreat > 0 ? norm(m.x, m.y, m.z) : norm(dx, dy, dz);
     i.boost = (p.retreat > 0 || p.flee) && d < 6; // bots boost to escape
-    i.fire = p.retreat <= 0 && d < this.radius(p) + DIVER.radius + BITE.range && Math.random() < dt * 1.6;
-    i.ability = d < 4 && Math.random() < dt * 0.6;
+    i.fire = p.retreat <= 0 && d < this.radius(p) + DIVER.radius + BITE.range && Math.random() < dt * D.biteRate;
+    i.ability = d < 4 && Math.random() < dt * D.abilityRate;
+  }
+
+  // a bot diver: hunt the nearest fish it can see, spear it from range, swing up close, flare when it can't find anyone
+  botDiverThink(p, dt) {
+    const i = p.input, D = this.diff;
+    const flare = p.fx.flare > 0;
+    const visible = [...this.players.values()].filter(a => a.role === 'animal' && a.alive && !a.cave && (!a.hidden || flare));
+    p.botT = (p.botT || 0) - dt;
+    if (p.botT <= 0) {
+      p.botT = D.react * rand(0.7, 1.3);
+      // pick a target (closest visible fish); otherwise wander between seaweed patches
+      let best = null, bd = Infinity;
+      for (const a of visible) { const d = dist3(a, p); if (d < bd) { bd = d; best = a; } }
+      p.targetId = best?.id || null;
+      if (!best && (!p.wander || Math.hypot(p.wander.x - p.x, p.wander.z - p.z) < 4)) {
+        const w = SEAWEED[Math.floor(Math.random() * SEAWEED.length)];
+        p.wander = { x: w.x, y: rand(3, 8), z: w.z + 4 };
+      }
+      p.err = { x: rand(-1, 1) * D.aimErr, y: rand(-1, 1) * D.aimErr, z: rand(-1, 1) * D.aimErr };
+      p.jx = rand(-3, 3); p.jy = rand(-2, 2); p.jz = rand(-3, 3);
+    }
+    const t = p.targetId && this.players.get(p.targetId);
+    const target = t && t.alive && visible.includes(t) ? t : null;
+    let tx, ty, tz;
+    if (target) {
+      const d = dist3(target, p);
+      // keep a little distance so the spear gun does the work; close in for a swing when it's slow or hurt
+      const want = target.hp <= DIVER.swingDmg ? 1.5 : 7;
+      const k = d > want ? 1 : -0.6;
+      tx = p.x + (target.x - p.x) * k + p.jx; ty = p.y + (target.y - p.y) * k + p.jy * 0.5; tz = p.z + (target.z - p.z) * k + p.jz;
+      // aim with a little lead and some wobble
+      const lead = Math.min(0.6, d / DIVER.spearSpeed);
+      const ax = target.x + target.vx * lead - p.x, ay = target.y + target.vy * lead - p.y, az = target.z + target.vz * lead - p.z;
+      const n = norm(ax, ay, az);
+      i.aim = norm(n.x + p.err.x, n.y + p.err.y, n.z + p.err.z);
+      i.fire = d < DIVER.spearSpeed * DIVER.spearLife * 0.8 && Math.random() < dt * D.fireRate;
+      i.swing = d < DIVER.swingRange + this.radius(target) && Math.random() < dt * D.fireRate * 1.5;
+      i.boost = d > 18 && p.stamina > 0.6;
+      i.ability = false;
+    } else {
+      const w = p.wander || { x: 0, y: 6, z: 0 };
+      tx = w.x; ty = w.y; tz = w.z;
+      const m = norm(tx - p.x, ty - p.y, tz - p.z);
+      i.aim = m;
+      i.fire = i.swing = false; i.boost = false;
+      i.ability = p.cd.ability <= 0 && Math.random() < dt * D.abilityRate; // flare to find hidden fish
+    }
+    // steer away from bubble columns, they throw the diver around
+    for (const b of BUBBLE_COLUMNS) {
+      const dx = p.x - b.x, dz = p.z - b.z, dd = Math.hypot(dx, dz);
+      if (dd < b.r + 3) { tx += (dx / (dd || 1)) * 6; tz += (dz / (dd || 1)) * 6; }
+    }
+    const m = { x: tx - p.x, y: ty - p.y, z: tz - p.z };
+    const ml = Math.hypot(m.x, m.y, m.z) || 1;
+    const pace = Math.min(1, ml / 2) * D.divePace;
+    i.mx = (m.x / ml) * pace; i.my = (m.y / ml) * pace; i.mz = (m.z / ml) * pace;
   }
 
   // ---------------- networking ----------------
@@ -457,14 +538,14 @@ export class Room {
     const r = n => Math.round(n * 100) / 100;
     const snap = {
       t: 'snap', phase: this.phase, time: Math.max(0, Math.round(this.timer * 10) / 10),
-      host: this.hostId, diver: this.diverId, result: this.result,
+      host: this.hostId, diver: this.diverId, result: this.result, diff: this.difficulty,
       players: [...this.players.values()].map(p => ({
         id: p.id, n: p.name, k: p.kind, r: p.role, s: p.suit, b: p.bot ? 1 : 0,
         x: r(p.x), y: r(p.y), z: r(p.z), vx: r(p.vx), vy: r(p.vy), vz: r(p.vz),
         hp: p.hp, al: p.alive ? 1 : 0,
         a: [r(p.aim.x), r(p.aim.y), r(p.aim.z)], h: p.hidden ? 1 : 0, c: p.cave ? 1 : 0, kl: p.kills,
         fx: Object.entries(p.fx).filter(([, v]) => v > 0).map(([k]) => k).concat(p.boosting ? ['boost'] : []),
-        cd: r(p.cd.ability), st: r(p.stamina), ti: p.tired ? 1 : 0,
+        cd: r(p.cd.ability), st: r(p.stamina), ti: p.tired ? 1 : 0, wd: p.wantsDiver ? 1 : 0,
       })),
       spears: this.spears.map(s => [s.id, r(s.x), r(s.y), r(s.z), r(s.vx), r(s.vy), r(s.vz)]),
       inks: this.inks.map(k => [r(k.x), r(k.y), r(k.z), k.r, r(k.life)]),
