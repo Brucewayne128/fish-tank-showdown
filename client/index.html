@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b3a5c" />
+  <title>Fish Tank Showdown</title>
+  <meta name="description" content="A toy diver vs. the fish tank. Multiplayer in your browser." />
+  <meta property="og:title" content="Fish Tank Showdown: Diver vs. the Fish Tank" />
+  <meta property="og:description" content="One toy diver. A tank full of angry fish. Share the link and play in your browser." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐠</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="ink-overlay"></div>
+  <div id="labels"></div>
+
+
+  <!-- Home -->
+  <section id="home" class="screen card-screen hidden">
+    <div class="card">
+      <h1 class="logo">Fish Tank<br>Showdown</h1>
+      <p class="sub">Each round a random player becomes the toy diver. Everyone else is the fish.</p>
+      <label>Name<input id="home-name" maxlength="16" /></label>
+      <button class="btn primary" id="btn-create">Create a match</button>
+      <div class="row">
+        <input id="join-code" placeholder="Room code" maxlength="5" autocapitalize="characters" />
+        <button class="btn" id="btn-join">Join</button>
+      </div>
+      <p id="home-error" class="error"></p>
+    </div>
+  </section>
+
+  <!-- Lobby -->
+  <section id="lobby" class="screen card-screen hidden">
+    <div class="card wide">
+      <div class="lobby-head">
+        <div>
+          <div class="eyebrow">Room</div>
+          <div id="room-code" class="code"></div>
+        </div>
+        <button class="btn" id="btn-share">Copy invite link</button>
+      </div>
+      <h2>Pick your sea creature</h2>
+      <div id="animal-grid" class="animal-grid"></div>
+      <h2>In the tank <span id="player-count" class="muted"></span></h2>
+      <ul id="player-list" class="player-list"></ul>
+      <div id="host-controls" class="row">
+        <button class="btn" id="btn-bot-rm">− Bot</button>
+        <button class="btn" id="btn-bot-add">+ Bot</button>
+        <button class="btn primary grow" id="btn-start">Start round</button>
+      </div>
+      <p id="wait-host" class="muted center hidden">Waiting for the host to start…</p>
+    </div>
+  </section>
+
+  <!-- Diver reveal / suit pick -->
+  <section id="suit" class="screen card-screen hidden">
+    <div class="card">
+      <div class="eyebrow" id="suit-timer"></div>
+      <h1 id="suit-title"></h1>
+      <p id="suit-sub" class="sub"></p>
+      <div id="suit-grid" class="suit-grid"></div>
+    </div>
+  </section>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div class="hud-top">
+      <div class="pill"><span id="hud-role"></span></div>
+      <div class="air"><div class="air-label">AIR</div><div class="air-bar"><div id="air-fill"></div></div><div id="air-time"></div></div>
+      <div class="pill" id="hud-alive"></div>
+    </div>
+    <div class="hud-hp">
+      <div id="hp-label"></div><div class="hp-bar"><div id="hp-fill"></div></div>
+      <div class="boost-row"><span>BOOST</span><div class="boost-bar"><div id="boost-fill"></div></div></div>
+    </div>
+    <div id="crosshair"></div>
+    <div id="lock-hint" class="lock-hint hidden">Click to look around</div>
+    <div id="feed"></div>
+    <div id="help" class="help"></div>
+  </div>
+
+  <!-- Touch controls -->
+  <div id="touch" class="hidden">
+    <div id="stick"><div id="knob"></div></div>
+    <div id="buttons">
+      <button class="tbtn" id="t-fire">🔱</button>
+      <button class="tbtn small" id="t-swing">💥</button>
+      <button class="tbtn small" id="t-ability">⚡</button>
+      <button class="tbtn small" id="t-boost">💨</button>
+    </div>
+  </div>
+
+  <!-- Round end -->
+  <section id="end" class="screen card-screen hidden">
+    <div class="card">
+      <h1 id="end-title"></h1>
+      <p id="end-reason" class="sub"></p>
+      <p class="muted" id="end-next"></p>
+    </div>
+  </section>
+
+  <div id="toast" class="toast hidden"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
