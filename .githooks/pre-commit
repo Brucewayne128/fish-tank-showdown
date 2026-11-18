@@ -1,0 +1,29 @@
+#!/bin/sh
+# Blocks commits that contain API keys, tokens, passwords or .env files.
+# Real secrets belong in your host's environment variables (Render > Environment), never in this repo.
+
+fail=0
+
+# 1) never commit env/key files
+bad_files=$(git diff --cached --name-only --diff-filter=ACMR | grep -iE '(^|/)\.env($|\.)|\.pem$|\.key$|\.p12$|\.pfx$|(^|/)secrets?/|id_rsa|credentials' | grep -vE '\.env\.example$')
+if [ -n "$bad_files" ]; then
+  echo "BLOCKED: these files can hold secrets and must not be committed:"
+  echo "$bad_files" | sed 's/^/  /'
+  fail=1
+fi
+
+# 2) scan the added lines for key-shaped strings
+patterns='sk-[A-Za-z0-9_-]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[abprs]-[A-Za-z0-9-]{10,}|(sk|rk)_live_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(api[_-]?key|secret|token|password|passwd)["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"'][A-Za-z0-9/+_=.-]{16,}["'"'"']'
+hits=$(git diff --cached -U0 --diff-filter=ACMR -- . ':(exclude)package-lock.json' | grep -E '^\+[^+]' | grep -iEn "$patterns")
+if [ -n "$hits" ]; then
+  echo "BLOCKED: this commit looks like it contains a secret:"
+  echo "$hits" | cut -c1-120 | sed 's/^/  /'
+  fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo ""
+  echo "Put keys in environment variables (Render dashboard > Environment) and read them with process.env."
+  exit 1
+fi
+exit 0
