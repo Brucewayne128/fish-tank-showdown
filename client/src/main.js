@@ -46,14 +46,35 @@ function show(name) {
   $('touch').classList.toggle('hidden', !(inGame && input.isTouch));
   if (!inGame || name === 'end') document.exitPointerLock?.();
   $('install-tip').classList.toggle('hidden', inGame || !showInstallTip());
+  document.body.classList.toggle('in-game', inGame);
 }
-// iPhone browsers don't let a web page hide their toolbars; the home-screen version runs full screen
+// Phone browsers that can't go full screen (every iPhone browser) can't hide their bars from a web page.
+// The home-screen version opens with no browser bars at all, so point players there.
 function showInstallTip() {
-  const iPhone = /iPhone|iPod/.test(navigator.userAgent);
   const standalone = navigator.standalone || matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches;
-  return iPhone && !standalone && store.get('tw_tip') !== '1';
+  const canFullscreen = document.fullscreenEnabled || document.webkitFullscreenEnabled;
+  let dismissed = false;
+  try { dismissed = sessionStorage.getItem('tw_tip') === '1'; } catch {}
+  return input.isTouch && !standalone && !canFullscreen && !dismissed;
 }
-$('install-close').addEventListener('click', () => { store.set('tw_tip', '1'); $('install-tip').classList.add('hidden'); });
+$('install-close').addEventListener('click', () => { try { sessionStorage.setItem('tw_tip', '1'); } catch {} $('install-tip').classList.add('hidden'); });
+
+// No text highlighting, long-press menus or zooming while the game is open (they get in the way of the controls).
+const isTextField = t => t && t.closest && t.closest('input, textarea');
+for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(ev, e => e.preventDefault(), { passive: false });
+document.addEventListener('dblclick', e => e.preventDefault(), { passive: false });
+document.addEventListener('contextmenu', e => { if (!isTextField(e.target)) e.preventDefault(); });
+document.addEventListener('selectstart', e => { if (!isTextField(e.target)) e.preventDefault(); });
+document.addEventListener('touchmove', e => {
+  // pinch (two fingers) never zooms; during play nothing scrolls or bounces either
+  if (e.touches.length > 1 || document.body.classList.contains('in-game')) e.preventDefault();
+}, { passive: false });
+let lastTouchEnd = 0;
+document.addEventListener('touchend', e => { // stop double-tap zoom on older iPhones
+  const now = Date.now();
+  if (now - lastTouchEnd < 350 && !isTextField(e.target) && !e.target.closest?.('button')) e.preventDefault();
+  lastTouchEnd = now;
+}, { passive: false });
 function toast(msg, ms = 2200) {
   const t = $('toast'); t.textContent = msg; t.classList.remove('hidden');
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add('hidden'), ms);
