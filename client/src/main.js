@@ -45,7 +45,15 @@ function show(name) {
   $('hud').classList.toggle('hidden', !inGame);
   $('touch').classList.toggle('hidden', !(inGame && input.isTouch));
   if (!inGame || name === 'end') document.exitPointerLock?.();
+  $('install-tip').classList.toggle('hidden', inGame || !showInstallTip());
 }
+// iPhone browsers don't let a web page hide their toolbars; the home-screen version runs full screen
+function showInstallTip() {
+  const iPhone = /iPhone|iPod/.test(navigator.userAgent);
+  const standalone = navigator.standalone || matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches;
+  return iPhone && !standalone && store.get('tw_tip') !== '1';
+}
+$('install-close').addEventListener('click', () => { store.set('tw_tip', '1'); $('install-tip').classList.add('hidden'); });
 function toast(msg, ms = 2200) {
   const t = $('toast'); t.textContent = msg; t.classList.remove('hidden');
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add('hidden'), ms);
@@ -142,12 +150,25 @@ function connect(code, mustExist) {
   ws.onerror = () => { $('home-error').textContent = 'Could not reach the server.'; };
 }
 
+// lobby options: diver opt-in (saved on this device) and bot difficulty (host picks)
+S.wantsDiver = store.get('tw_diver') !== '0';
+$('opt-diver').checked = S.wantsDiver;
+$('opt-diver').addEventListener('change', e => {
+  S.wantsDiver = e.target.checked; store.set('tw_diver', S.wantsDiver ? '1' : '0');
+  send({ t: 'diverpref', on: S.wantsDiver }); sfx.click();
+});
+$('diff-seg').addEventListener('click', e => {
+  const l = e.target.closest('button')?.dataset.l;
+  if (l && S.snap?.host === S.myId) { send({ t: 'diff', level: l }); sfx.click(); }
+});
+
 function onMessage(m) {
   if (m.t === 'error') { const ws = S.ws; S.ws = null; if (ws) { ws.onclose = null; ws.close(); } show('home'); $('home-error').textContent = m.error; return; }
   if (m.t === 'welcome') {
     S.myId = m.id; S.room = m.room;
     $('room-code').textContent = m.room;
     history.replaceState(null, '', `/?room=${m.room}`);
+    send({ t: 'diverpref', on: S.wantsDiver });
     return;
   }
   if (m.t === 'snap') {
@@ -229,6 +250,11 @@ function updatePhaseUI(m) {
     $('host-controls').classList.toggle('hidden', !isHost);
     $('wait-host').classList.toggle('hidden', isHost);
     $('btn-start').textContent = m.players.length < 2 ? 'Start (with a bot)' : 'Start round';
+    for (const b of $('diff-seg').children) b.classList.toggle('sel', b.dataset.l === m.diff);
+    $('diff-seg').classList.toggle('locked', !isHost);
+    // if nobody wants to dive, a bot will be the diver
+    const willing = m.players.some(p => !p.b && p.wd);
+    $('opt-diver').parentElement.title = willing ? '' : 'Nobody wants to dive, so a bot will be the diver.';
   } else if (m.phase === 'suit') {
     if (lastPhase !== 'suit') {
       show('suit');
@@ -386,7 +412,7 @@ function frame() {
   animateScene(t, dt);
 
   const snap = S.snap;
-  let myRole = null, inInk = false, focus = null;
+  let myRole = null, inInk = false, focus = null, outsideView = false;
   const live = !!snap && (snap.phase === 'play' || snap.phase === 'end' || snap.phase === 'suit');
   input.enabled = live && snap.phase !== 'suit';
 
@@ -417,6 +443,8 @@ function frame() {
         });
       }
       focus = myPos;
+    } else if (meP && meP.r === 'animal' && !meP.al) {
+      outsideView = true; // eaten: watch the rest of the round through the front glass
     } else {
       const d = snap.byId.get(snap.diver);
       if (d) focus = interpPlayer(d.id, alpha);
@@ -513,7 +541,10 @@ function frame() {
   });
 
   // ---- camera ----
-  if (focus) {
+  if (outsideView) {
+    camera.position.lerp(tmpV.set(0, 19, 64), Math.min(1, dt * 2));
+    camera.lookAt(0, 12, 0);
+  } else if (focus) {
     // third person: behind and a little above your character, looking where you look
     const fw = input.forward(tmpF);
     const back = myRole === 'diver' || myRole === 'animal' ? 6.5 : 9;
@@ -549,7 +580,7 @@ function updateHUD(snap, me) {
     $('hp-label').textContent = `Health ${me.hp}/${DIVER.hp} · ${cdTxt}`;
     $('hp-fill').style.width = (me.hp / DIVER.hp) * 100 + '%';
   } else if (me.r === 'animal') {
-    $('hud-role').textContent = `${EMOJI[me.k]} ${ANIMALS[me.k].name}${me.al ? '' : ' (eaten… spectating)'}`;
+    $('hud-role').textContent = `${EMOJI[me.k]} ${ANIMALS[me.k].name}${me.al ? '' : ' (eaten, watching from outside)'}`;
     $('hp-label').textContent = me.al ? `Health ${me.hp}/${ANIMAL_HP} · ${cdTxt}` : 'Spectating';
     $('hp-fill').style.width = (me.hp / ANIMAL_HP) * 100 + '%';
   } else {
