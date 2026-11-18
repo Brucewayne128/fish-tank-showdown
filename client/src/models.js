@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { addCaustics } from './caustics.js';
 import { SUITS } from '../../shared/constants.js';
 
 const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.05, transparent: true, ...opts });
@@ -198,7 +199,7 @@ export function createModel(p) {
   const wrap = new THREE.Group();
   wrap.add(g);
   wrap.userData = { inner: g, role: p.r, kind: p.k, suit: p.s, flash: 0, swing: 0, mats: [] };
-  wrap.traverse(o => { if (o.isMesh) { o.castShadow = true; wrap.userData.mats.push(o.material); } });
+  wrap.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; addCaustics(o.material, 0.8); wrap.userData.mats.push(o.material); } });
   // de-dupe materials
   wrap.userData.mats = [...new Set(wrap.userData.mats)];
   wrap.userData.baseEmissive = wrap.userData.mats.map(m => m.emissive.getHex());

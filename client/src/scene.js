@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { TANK, BUBBLE_COLUMNS, CAVES, SEAWEED, ANEMONES } from '../../shared/constants.js';
+import { addCaustics, causticTime } from './caustics.js';
+import { sandTextures, brickTextures, rockTextures, woodTextures, tileTextures, boxUV } from './textures.js';
 
 export function buildScene(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -10,29 +12,32 @@ export function buildScene(canvas) {
 
   const scene = new THREE.Scene();
   const WATER = 0x1a6f9e;
-  scene.background = new THREE.Color(WATER);
+  scene.background = new THREE.Color(0x0a1822); // dim room around the tank
   scene.fog = new THREE.Fog(WATER, 30, 130);
 
   const camera = new THREE.PerspectiveCamera(65, 1, 0.1, 500);
   camera.position.set(0, 20, 70);
 
-  scene.add(new THREE.HemisphereLight(0xc8f2ff, 0x2a4d3a, 1.5));
-  const sun = new THREE.DirectionalLight(0xffffff, 2.2);
-  sun.position.set(-15, 60, 18);
+  // soft fill from all around, plus the tank lamp straight above (the only shadow caster)
+  scene.add(new THREE.HemisphereLight(0xbfeaff, 0x24402f, 0.95));
+  const sun = new THREE.DirectionalLight(0xfff6e0, 3.2);
+  sun.position.set(6, 90, 12);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.mapSize.set(4096, 4096);
-  Object.assign(sun.shadow.camera, { left: -55, right: 55, top: 32, bottom: -32, near: 1, far: 130 });
+  sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.04;
+  Object.assign(sun.shadow.camera, { left: -52, right: 52, top: 28, bottom: -28, near: 40, far: 120 });
   scene.add(sun);
 
   const W = TANK.maxX - TANK.minX, D = TANK.maxZ - TANK.minZ, H = TANK.maxY + 1;
   const cx = (TANK.maxX + TANK.minX) / 2, cz = (TANK.maxZ + TANK.minZ) / 2;
 
   // ---- gravel floor ----
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(W, 1, D), new THREE.MeshStandardMaterial({ color: 0xd9c49a, roughness: 1 }));
+  const sand = sandTextures(1);
+  sand.map.repeat.set(W / 7, D / 7); sand.bump.repeat.set(W / 7, D / 7);
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(W, 1, D), new THREE.MeshStandardMaterial({ map: sand.map, bumpMap: sand.bump, bumpScale: 1.5, roughness: 1 }));
   floor.position.set(cx, -0.5, cz); floor.receiveShadow = true; scene.add(floor);
   const pebbleColors = [0xf2a7c3, 0x8fd3ff, 0xffe28a, 0xb6f5a2, 0xffffff, 0xc9a7ff];
-  const pebbles = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.2, 0), new THREE.MeshStandardMaterial({ roughness: 0.8 }), 11000);
+  const pebbles = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.2, 0), new THREE.MeshStandardMaterial({ roughness: 0.8 }), 4500);
   const m4 = new THREE.Matrix4(), col = new THREE.Color();
   for (let i = 0; i < pebbles.count; i++) {
     const s = 0.6 + Math.random() * 0.9;
@@ -68,15 +73,39 @@ export function buildScene(canvas) {
   const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(W, H), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(bg), fog: false }));
   backdrop.position.set(cx, H / 2, TANK.minZ - 0.05); scene.add(backdrop);
 
-  const rimMat = new THREE.MeshStandardMaterial({ color: 0x222831, roughness: 0.6 });
+  const rimMat = new THREE.MeshStandardMaterial({ color: 0x222831, roughness: 0.6, fog: false });
   const rimBot = new THREE.Mesh(new THREE.BoxGeometry(W + 0.8, 0.8, D + 0.8), rimMat);
   rimBot.position.set(cx, -1.3, cz); scene.add(rimBot);
   for (const [sx, sz, x, z] of [[W + 0.8, 0.4, cx, TANK.maxZ + 0.2], [W + 0.8, 0.4, cx, TANK.minZ - 0.2], [0.4, D, TANK.minX - 0.2, cz], [0.4, D, TANK.maxX + 0.2, cz]]) {
     const r = new THREE.Mesh(new THREE.BoxGeometry(sx, 0.4, sz), rimMat); r.position.set(x, H + 0.1, z); scene.add(r);
   }
   // a table under the tank so the outside reads as "a room"
-  const table = new THREE.Mesh(new THREE.BoxGeometry(W + 8, 1.2, D + 8), new THREE.MeshStandardMaterial({ color: 0x5b3a22, roughness: 0.8 }));
+  const table = new THREE.Mesh(new THREE.BoxGeometry(W + 8, 1.2, D + 8), new THREE.MeshStandardMaterial({ color: 0x5b3a22, roughness: 0.8, fog: false }));
   table.position.set(cx, -2.3, cz); scene.add(table);
+
+  // ---- the tank lamp: a light bar resting across the top rims ----
+  const lamp = new THREE.Group();
+  const lampBody = new THREE.Mesh(new THREE.BoxGeometry(W * 0.94, 1.5, 7), new THREE.MeshStandardMaterial({ color: 0xe9eef2, roughness: 0.35, metalness: 0.1, fog: false }));
+  lamp.add(lampBody);
+  const glow = new THREE.Mesh(new THREE.PlaneGeometry(W * 0.9, 5.6), new THREE.MeshBasicMaterial({ color: 0xfff8e6, fog: false }));
+  glow.rotation.x = Math.PI / 2; glow.position.y = -0.76; lamp.add(glow); // faces down into the water
+  const stripMat = new THREE.MeshBasicMaterial({ color: 0xbff4ff, fog: false });
+  for (const zz of [-3.52, 3.52]) { // glowing edge lines on the front and back of the hood
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(W * 0.9, 0.18, 0.05), stripMat);
+    strip.position.set(0, -0.45, zz); lamp.add(strip);
+  }
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) { // arms out to the front and back rims
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, D / 2 - 2), lampBody.material);
+    leg.position.set(sx * W * 0.4, -0.2, sz * (D / 4)); lamp.add(leg);
+  }
+  lamp.position.set(cx, H + 1.0, cz); scene.add(lamp);
+  // soft halo on the water surface under the lamp
+  const haloC = document.createElement('canvas'); haloC.width = haloC.height = 128;
+  const hx = haloC.getContext('2d'), hg = hx.createRadialGradient(64, 64, 4, 64, 64, 64);
+  hg.addColorStop(0, 'rgba(255,250,225,.9)'); hg.addColorStop(0.4, 'rgba(255,245,210,.25)'); hg.addColorStop(1, 'rgba(255,245,210,0)');
+  hx.fillStyle = hg; hx.fillRect(0, 0, 128, 128);
+  const halo = new THREE.Mesh(new THREE.PlaneGeometry(W * 1.05, 18), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(haloC), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, opacity: 0.6, side: THREE.DoubleSide }));
+  halo.rotation.x = Math.PI / 2; halo.position.set(cx, TANK.maxY + 0.1, cz); scene.add(halo);
 
   // water surface (seen from below)
   const surface = new THREE.Mesh(new THREE.PlaneGeometry(W, D, 44, 20),
@@ -84,23 +113,30 @@ export function buildScene(canvas) {
   surface.rotation.x = -Math.PI / 2; surface.position.set(cx, TANK.maxY + 0.3, cz); scene.add(surface);
 
   // light shafts
-  const shaftMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.045, depthWrite: false, side: THREE.DoubleSide });
-  for (let i = 0; i < 30; i++) {
-    const s = new THREE.Mesh(new THREE.PlaneGeometry(3 + Math.random() * 3, H * 1.2), shaftMat);
-    s.position.set(TANK.minX + 3 + Math.random() * (W - 6), H / 2, TANK.minZ + 2 + Math.random() * (D - 4));
-    s.rotation.set(0, Math.random() * Math.PI, 0.2);
+  const shC = document.createElement('canvas'); shC.width = 4; shC.height = 128;
+  const shx = shC.getContext('2d'), shg = shx.createLinearGradient(0, 0, 0, 128);
+  shg.addColorStop(0, 'rgba(255,255,240,1)'); shg.addColorStop(1, 'rgba(255,255,240,0)');
+  shx.fillStyle = shg; shx.fillRect(0, 0, 4, 128);
+  const shaftMat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shC), transparent: true, opacity: 0.08, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+  for (let i = 0; i < 34; i++) {
+    const s = new THREE.Mesh(new THREE.PlaneGeometry(2.5 + Math.random() * 3.5, H * 1.15), shaftMat);
+    s.position.set(TANK.minX + 3 + Math.random() * (W - 6), H * 0.45, cz + (Math.random() - 0.5) * (D - 10));
+    s.rotation.set(0, Math.random() * Math.PI, (Math.random() - 0.5) * 0.25);
     scene.add(s);
   }
 
   // ---- castles, each with a fish-only cave ----
+  const brick = brickTextures(), tiles = tileTextures();
+  const castleStone = new THREE.MeshStandardMaterial({ map: brick.map, bumpMap: brick.bump, bumpScale: 3, roughness: 0.95 });
+  const roofMat = new THREE.MeshStandardMaterial({ map: tiles.map, bumpMap: tiles.bump, bumpScale: 2, roughness: 0.7 });
   for (const CAVE of CAVES) {
   const castle = new THREE.Group();
-  const stone = new THREE.MeshStandardMaterial({ color: 0xb08a6a, roughness: 0.9 });
+  const stone = castleStone;
   const dark = new THREE.MeshBasicMaterial({ color: 0x1a1008 });
   const cw = CAVE.maxX - CAVE.minX, cd = CAVE.maxZ - CAVE.minZ;
   const ccx = (CAVE.minX + CAVE.maxX) / 2, ccz = (CAVE.minZ + CAVE.maxZ) / 2, ch = CAVE.maxY;
   const t = 0.6; // wall thickness (just outside the cave box)
-  const wall = (sx, sy, sz, x, y, z, m = stone) => { const w = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), m); w.position.set(x, y, z); castle.add(w); return w; };
+  const wall = (sx, sy, sz, x, y, z, m = stone) => { const w = new THREE.Mesh(boxUV(new THREE.BoxGeometry(sx, sy, sz), 0.4), m); w.position.set(x, y, z); castle.add(w); return w; };
   wall(t, ch, cd, CAVE.minX - t / 2, ch / 2, ccz);            // left wall
   wall(t, ch, cd, CAVE.maxX + t / 2, ch / 2, ccz);            // right wall
   wall(cw + 2 * t, 1.2, cd + t, ccx, ch + 0.6, ccz + t / 2);   // roof
@@ -116,8 +152,12 @@ export function buildScene(canvas) {
   // inside: dark so the cave reads as a cave
   wall(cw, ch, 0.1, ccx, ch / 2, CAVE.minZ + 0.06, dark);
   for (const x of [CAVE.minX + 0.9, CAVE.maxX - 0.9]) {
-    const tower = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.2, 4.5, 14), stone); tower.position.set(x, ch + 3.4, ccz); castle.add(tower);
-    const roof = new THREE.Mesh(new THREE.ConeGeometry(1.45, 1.8, 14), new THREE.MeshStandardMaterial({ color: 0xd94f4f })); roof.position.set(x, ch + 6.5, ccz); castle.add(roof);
+    const tg = new THREE.CylinderGeometry(1.1, 1.2, 4.5, 16);
+    { const uv = tg.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 2.8, uv.getY(i) * 1.8); }
+    const tower = new THREE.Mesh(tg, stone); tower.position.set(x, ch + 3.4, ccz); castle.add(tower);
+    const rg = new THREE.ConeGeometry(1.45, 1.8, 16);
+    { const uv = rg.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 3, uv.getY(i) * 1.2); }
+    const roof = new THREE.Mesh(rg, roofMat); roof.position.set(x, ch + 6.5, ccz); castle.add(roof);
   }
   castle.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   scene.add(castle);
@@ -140,7 +180,7 @@ export function buildScene(canvas) {
       m.rotation.y = Math.random() * Math.PI;
       m.userData.base = geo.attributes.position.array.slice();
       m.userData.phase = Math.random() * 6;
-      m.castShadow = true;
+      m.castShadow = true; m.receiveShadow = true;
       scene.add(m); weeds.push(m);
     }
   }
@@ -162,6 +202,7 @@ export function buildScene(canvas) {
       pivot.userData.phase = Math.random() * 6;
       anem.add(pivot); anTents.push(pivot);
     }
+    anem.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     anem.position.set(A.x, 0, A.z); scene.add(anem);
     const hb = new THREE.Mesh(new THREE.SphereGeometry(A.r, 24, 16), healMat);
     hb.position.set(A.x, A.y, A.z); scene.add(hb); healBubbles.push(hb);
@@ -170,9 +211,11 @@ export function buildScene(canvas) {
   // ---- bubble columns ----
   const bubbleGeo = new THREE.SphereGeometry(0.16, 8, 6);
   const bubbleMat = new THREE.MeshStandardMaterial({ color: 0xe6fbff, emissive: 0x6fb8d8, transparent: true, opacity: 0.7, roughness: 0.05 });
+  const stoneT = rockTextures();
+  const airStoneMat = new THREE.MeshStandardMaterial({ color: 0x9fb2c0, map: stoneT.map, bumpMap: stoneT.bump, bumpScale: 2, roughness: 1 });
   const columns = BUBBLE_COLUMNS.map(bc => {
-    const st = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.7, 0.4, 12), new THREE.MeshStandardMaterial({ color: 0x3b4a57 }));
-    st.position.set(bc.x, 0.2, bc.z); scene.add(st);
+    const st = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.75, 0.45, 14), airStoneMat);
+    st.position.set(bc.x, 0.22, bc.z); st.castShadow = st.receiveShadow = true; scene.add(st);
     const count = 220;
     const inst = new THREE.InstancedMesh(bubbleGeo, bubbleMat, count);
     const parts = Array.from({ length: count }, () => {
@@ -193,20 +236,29 @@ export function buildScene(canvas) {
 
   // decorations: treasure chest, rocks
   const chest = new THREE.Group();
-  const wood = new THREE.MeshStandardMaterial({ color: 0x7a4a21 }), gold = new THREE.MeshStandardMaterial({ color: 0xf2c94c, metalness: 0.8, roughness: 0.3, emissive: 0x332200 });
-  const cb = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1, 1.1), wood); cb.position.y = 0.5; chest.add(cb);
+  const woodT = woodTextures();
+  const wood = new THREE.MeshStandardMaterial({ map: woodT.map, bumpMap: woodT.bump, bumpScale: 2, roughness: 0.85 }), gold = new THREE.MeshStandardMaterial({ color: 0xf2c94c, metalness: 0.8, roughness: 0.3, emissive: 0x332200 });
+  const cb = new THREE.Mesh(boxUV(new THREE.BoxGeometry(1.8, 1, 1.1), 0.9), wood); cb.position.y = 0.5; chest.add(cb);
   const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 1.8, 12, 1, false, 0, Math.PI), wood);
   lid.rotation.z = Math.PI / 2; lid.position.y = 1; chest.add(lid);
   for (let i = 0; i < 6; i++) { const c = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.05, 10), gold); c.position.set(-0.6 + i * 0.25, 1.05, 0.5); c.rotation.x = 1.2; chest.add(c); }
-  chest.position.set(-30, 0, 9); chest.rotation.y = 0.6; chest.traverse(o => o.isMesh && (o.castShadow = true)); scene.add(chest);
-  const rockMat = new THREE.MeshStandardMaterial({ color: 0x6b7a85, roughness: 0.95, flatShading: true });
+  chest.position.set(-30, 0, 9); chest.rotation.y = 0.6; chest.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } }); scene.add(chest);
+  const rockT = rockTextures();
+  const rockMat = new THREE.MeshStandardMaterial({ map: rockT.map, bumpMap: rockT.bump, bumpScale: 3, roughness: 0.95, flatShading: true });
   for (const [x, z, s] of [[4, 17, 1.8], [34, 15, 1.4], [-43, 17, 1.6], [17, -17, 2.2], [-20, -17, 1.9], [0, -6, 1.3], [44, 2, 1.5], [-12, 8, 1.2], [24, 0, 1.7]]) {
-    const r = new THREE.Mesh(new THREE.DodecahedronGeometry(s, 0), rockMat);
+    const r = new THREE.Mesh(boxUV(new THREE.DodecahedronGeometry(s, 1), 0.35), rockMat);
+    r.rotation.y = x * 1.3;
     r.position.set(x, s * 0.4, z); r.scale.y = 0.6; r.castShadow = r.receiveShadow = true; scene.add(r);
   }
 
+  // rippling lamp light on everything inside the tank (not the table, rims or the lamp itself)
+  const noCaustics = new Set([table, rimBot]);
+  scene.traverse(o => { if (o.isMesh && !noCaustics.has(o) && o.parent !== lamp) addCaustics(o.material); });
+
   const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpS = new THREE.Vector3(), tmpP = new THREE.Vector3();
   function animate(time, dt) {
+    causticTime.value = time;
+    shaftMat.opacity = 0.07 + Math.sin(time * 0.7) * 0.02;
     for (const w of weeds) {
       const pos = w.geometry.attributes.position, base = w.userData.base;
       for (let i = 0; i < pos.count; i++) {

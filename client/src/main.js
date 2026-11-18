@@ -58,6 +58,15 @@ const inviteCode = (params.get('room') || '').toUpperCase();
 addEventListener('pointerdown', () => sfx.unlock(), { once: true });
 addEventListener('keydown', () => sfx.unlock(), { once: true });
 
+// phones: go fullscreen and lock to landscape on the first tap (works on Android; iPhone just shows the rotate screen)
+async function goLandscape() {
+  if (!input.isTouch) return;
+  try { if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }); } catch {}
+  try { await screen.orientation?.lock?.('landscape'); } catch {}
+}
+addEventListener('click', goLandscape, { once: true, capture: true });
+$('rotate').addEventListener('click', goLandscape);
+
 function boot() {
   $('home-name').value = S.name;
   if (inviteCode) $('join-code').value = inviteCode;
@@ -519,8 +528,8 @@ function frame() {
   } else {
     // menus: slow orbit around the tank
     orbit += dt * 0.08;
-    camera.position.lerp(tmpV.set(Math.sin(orbit) * 75, 30, Math.cos(orbit) * 75), Math.min(1, dt * 2));
-    camera.lookAt(0, 12, 0);
+    camera.position.lerp(tmpV.set(Math.sin(orbit) * 78, 46, Math.cos(orbit) * 78), Math.min(1, dt * 2));
+    camera.lookAt(0, 10, 0);
   }
 
   renderer.render(scene, camera);
