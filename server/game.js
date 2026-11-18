@@ -1,6 +1,6 @@
 import {
   TANK, ROUND_TIME, SUIT_PICK_TIME, END_TIME, DIVER, ANIMAL_HP, BITE, ANIMALS, SUITS,
-  BUBBLE_COLUMNS, CAVE, SEAWEED, ANEMONE, BOOST, FLARE_TIME, dist3,
+  BUBBLE_COLUMNS, CAVES, SEAWEED, ANEMONES, HEAL_EVERY, BOOST, FLARE_TIME, dist3,
 } from '../shared/constants.js';
 
 const BOT_NAMES = ['Bubbles', 'Finn', 'Coral', 'Gill', 'Splash', 'Kelp', 'Pebble', 'Squirt'];
@@ -11,10 +11,18 @@ let nextId = 1;
 const rand = (a, b) => a + Math.random() * (b - a);
 const norm = (x, y, z) => { const l = Math.hypot(x, y, z) || 1; return { x: x / l, y: y / l, z: z / l }; };
 
-export function inCave(x, y, z, pad = 0) {
-  return x > CAVE.minX - pad && x < CAVE.maxX + pad && y > CAVE.minY - pad && y < CAVE.maxY + pad
-    && z > CAVE.minZ - pad && z < CAVE.maxZ + pad;
+function inBox(c, x, y, z, pad) {
+  return x > c.minX - pad && x < c.maxX + pad && y > c.minY - pad && y < c.maxY + pad
+    && z > c.minZ - pad && z < c.maxZ + pad;
 }
+// returns the cave the point is in (or null)
+export function inCave(x, y, z, pad = 0) {
+  return CAVES.find(c => inBox(c, x, y, z, pad)) || null;
+}
+const nearest = (list, p) => list.reduce((b, c) => {
+  const d = Math.hypot((c.x ?? (c.minX + c.maxX) / 2) - p.x, (c.z ?? (c.minZ + c.maxZ) / 2) - p.z);
+  return d < b.d ? { c, d } : b;
+}, { c: list[0], d: Infinity }).c;
 export function inSeaweed(x, y, z) {
   return SEAWEED.some(s => Math.hypot(x - s.x, z - s.z) < s.r && y < s.h);
 }
@@ -130,11 +138,11 @@ export class Room {
       p.stamina = 1; p.tired = false; p.boosting = false;
       p.input.mx = p.input.my = p.input.mz = 0;
       if (p === diver) {
-        p.role = 'diver'; p.hp = DIVER.hp; p.x = -17; p.y = 9; p.z = 0;
+        p.role = 'diver'; p.hp = DIVER.hp; p.x = -38; p.y = 14; p.z = 0;
         p.aim = p.input.aim = { x: 1, y: 0, z: 0 };
       } else {
         p.role = 'animal'; p.hp = ANIMAL_HP;
-        p.x = rand(5, 18); p.y = rand(5.5, 12); p.z = rand(-3, 8);
+        p.x = rand(15, 42); p.y = rand(6, 24); p.z = rand(-12, 16);
         p.aim = p.input.aim = { x: -1, y: 0, z: 0 };
       }
     }
@@ -255,7 +263,9 @@ export class Room {
     if (p.y > TANK.maxY - r * 0.5) { p.y = TANK.maxY - r * 0.5; p.vy = Math.min(0, p.vy); }
 
     // the diver is too big for the cave: push out through the nearest open face
-    if (isDiver && inCave(p.x, p.y, p.z, r)) {
+    const cave = isDiver && inCave(p.x, p.y, p.z, r);
+    if (cave) {
+      const CAVE = cave;
       const faces = [
         [p.x - (CAVE.minX - r), 'x', CAVE.minX - r],
         [(CAVE.maxX + r) - p.x, 'x', CAVE.maxX + r],
@@ -269,7 +279,7 @@ export class Room {
 
     p.aim = p.input.aim;
     p.hidden = !isDiver && inSeaweed(p.x, p.y, p.z);
-    p.cave = !isDiver && inCave(p.x, p.y, p.z);
+    p.cave = !isDiver && !!inCave(p.x, p.y, p.z);
   }
 
   radius(p) {
@@ -347,9 +357,9 @@ export class Room {
       }
       this.events.push({ e: 'ability', id: p.id, kind: p.kind });
     }
-    // anemone heals animals
-    if (Math.hypot(p.x - ANEMONE.x, p.y - ANEMONE.y, p.z - ANEMONE.z) < ANEMONE.r && p.hp < ANIMAL_HP && p.cd.heal <= 0) {
-      p.cd.heal = ANEMONE.healEvery;
+    // anemones heal animals
+    if (p.hp < ANIMAL_HP && p.cd.heal <= 0 && ANEMONES.some(an => Math.hypot(p.x - an.x, p.y - an.y, p.z - an.z) < an.r)) {
+      p.cd.heal = HEAL_EVERY;
       p.hp = Math.min(ANIMAL_HP, p.hp + 1);
       this.events.push({ e: 'heal', id: p.id });
     }
@@ -421,11 +431,12 @@ export class Room {
     if (p.retreat > 0) {
       tx = p.x - dx * 2 + p.rdir.x * 4; ty = p.y - dy + p.rdir.y * 3; tz = p.z - dz * 2 + p.rdir.z * 4;
     } else if (p.flee) {
-      // retreat to the anemone to heal, or into the cave
-      const heal = Math.hypot(p.x - ANEMONE.x, p.z - ANEMONE.z) < 15;
-      tx = heal ? ANEMONE.x : (CAVE.minX + CAVE.maxX) / 2;
-      ty = heal ? ANEMONE.y + 0.5 : 2;
-      tz = heal ? ANEMONE.z : (CAVE.minZ + CAVE.maxZ) / 2;
+      // retreat to the nearest anemone to heal, or into the nearest cave
+      const an = nearest(ANEMONES, p), cave = nearest(CAVES, p);
+      const heal = Math.hypot(p.x - an.x, p.z - an.z) < 20;
+      tx = heal ? an.x : (cave.minX + cave.maxX) / 2;
+      ty = heal ? an.y + 0.5 : 2;
+      tz = heal ? an.z : cave.maxZ - 1.5;
     } else { tx = diver.x + p.jx; ty = diver.y + p.jy; tz = diver.z + p.jz; }
     const m = { x: tx - p.x, y: ty - p.y, z: tz - p.z };
     const ml = Math.hypot(m.x, m.y, m.z) || 1;
