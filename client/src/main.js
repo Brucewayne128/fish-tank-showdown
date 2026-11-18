@@ -509,9 +509,8 @@ function frame() {
     const fw = input.forward(tmpF);
     const back = myRole === 'diver' || myRole === 'animal' ? 6.5 : 9;
     camTarget.set(focus.x, focus.y + 1.6, focus.z).addScaledVector(fw, -back);
-    camTarget.x = Math.max(TANK.minX + 0.6, Math.min(TANK.maxX - 0.6, camTarget.x));
-    camTarget.z = Math.max(TANK.minZ + 0.6, Math.min(TANK.maxZ - 0.6, camTarget.z));
-    camTarget.y = Math.max(0.8, Math.min(TANK.maxY + 0.5, camTarget.y));
+    // the camera may leave the tank (the glass is invisible from outside); just keep it above the gravel
+    camTarget.y = Math.max(0.8, camTarget.y);
     camera.position.lerp(camTarget, Math.min(1, dt * 12));
     camLook.set(focus.x, focus.y + 1.0, focus.z).addScaledVector(fw, 6);
     S.shake = Math.max(0, S.shake - dt);
@@ -520,8 +519,8 @@ function frame() {
   } else {
     // menus: slow orbit around the tank
     orbit += dt * 0.08;
-    camera.position.lerp(tmpV.set(Math.sin(orbit) * 30, 13, Math.cos(orbit) * 30), Math.min(1, dt * 2));
-    camera.lookAt(0, 6, 0);
+    camera.position.lerp(tmpV.set(Math.sin(orbit) * 75, 30, Math.cos(orbit) * 75), Math.min(1, dt * 2));
+    camera.lookAt(0, 12, 0);
   }
 
   renderer.render(scene, camera);
